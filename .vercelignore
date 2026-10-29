@@ -1,0 +1,9 @@
+**/node_modules
+**/.env
+**/.env.*
+**/dist
+.git
+.vercel
+*.bat
+README.md
+server/scripts

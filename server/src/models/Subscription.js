@@ -69,6 +69,11 @@ const subscriptionSchema = new mongoose.Schema(
       },
       default: 'active',
     },
+    statusOverride: {
+      type: String,
+      enum: ['active', 'expiring_soon', 'expired', 'cancelled', null],
+      default: null,
+    },
     notes: {
       type: String,
       default: '',
@@ -99,7 +104,9 @@ subscriptionSchema.pre('validate', function () {
     this.totalPrice = Math.round(this.quantity * this.unitPrice * 1000) / 1000;
   }
 
-  if (this.status !== 'cancelled' && this.expirationDate) {
+  if (this.statusOverride) {
+    this.status = this.statusOverride;
+  } else if (this.status !== 'cancelled' && this.expirationDate) {
     const remaining = this.expirationDate.getTime() - Date.now();
     this.status = remaining <= 0 ? 'expired' : remaining <= 7 * 86400000 ? 'expiring_soon' : 'active';
   }

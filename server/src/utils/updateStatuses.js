@@ -17,6 +17,7 @@ const updateStatuses = async () => {
     const expiredResult = await Subscription.updateMany(
       {
         status: { $in: ['active', 'expiring_soon'] },
+        statusOverride: null,
         expirationDate: { $lte: now },
       },
       { $set: { status: 'expired' } }
@@ -26,6 +27,7 @@ const updateStatuses = async () => {
     const expiringSoonResult = await Subscription.updateMany(
       {
         status: 'active',
+        statusOverride: null,
         expirationDate: { $gt: now, $lte: sevenDaysFromNow },
       },
       { $set: { status: 'expiring_soon' } }
@@ -36,6 +38,7 @@ const updateStatuses = async () => {
     const reactivatedResult = await Subscription.updateMany(
       {
         status: 'expiring_soon',
+        statusOverride: null,
         expirationDate: { $gt: sevenDaysFromNow },
       },
       { $set: { status: 'active' } }

@@ -12,7 +12,7 @@ const dotenv = require('dotenv');
 const localEnvironment = fs.existsSync(path.join(__dirname, '../.env'))
   ? dotenv.parse(fs.readFileSync(path.join(__dirname, '../.env')))
   : {};
-const uri = process.env.TEST_MONGODB_URI || localEnvironment.MONGODB_URI;
+const uri = process.env.TEST_MONGODB_URI || localEnvironment.MONGODB_URI || process.env.MONGODB_URI;
 const databaseName = `submanager_test_${crypto.randomBytes(8).toString('hex')}`;
 const password = crypto.randomBytes(18).toString('hex');
 let server;
@@ -193,7 +193,61 @@ test('renewals preserve remaining validity and reject invalid payments before wr
   assert.equal(old.json.data.subscription.status, 'expired');
   const restart = await request(`/subscriptions/${old.json.data.subscription._id}/renew`, { method: 'POST', body: { duration: { value: 1, unit: 'months' } } });
   assert.equal(restart.status, 201, restart.json.message);
-  assert.ok(new Date(restart.json.data.subscription.startDate).getTime() >= Date.now() - 30000);
+  assert.equal(restart.json.data.subscription.startDate, old.json.data.subscription.expirationDate);
+  assert.equal(restart.json.data.subscription.expirationDate, '2020-03-29T00:00:00.000Z');
+});
+
+test('late renewal always adds the chosen months to the old expiration, ignoring a cached browser date', async () => {
+  const created = await request('/subscriptions', { method: 'POST', body: subscription({ startDate: '2026-08-19T00:00:00.000Z', duration: 2 }) });
+  assert.equal(created.status, 201);
+  const original = created.json.data.subscription;
+  assert.equal(original.expirationDate, '2026-10-19T00:00:00.000Z');
+  for (const [months, expected] of [[1, '2026-11-19T00:00:00.000Z'], [2, '2026-12-19T00:00:00.000Z']]) {
+    const renewed = await request(`/subscriptions/${original._id}/renew`, { method: 'POST', body: { duration: months, startDate: '2026-10-29T00:00:00.000Z' } });
+    assert.equal(renewed.status, 201, renewed.json.message);
+    assert.equal(renewed.json.data.subscription.startDate, original.expirationDate);
+    assert.equal(renewed.json.data.subscription.expirationDate, expected);
+  }
+});
+
+test('manual statuses survive list and dashboard refreshes, and automatic status can be restored', async () => {
+  const created = await request('/subscriptions', { method: 'POST', body: subscription({ startDate: '2020-01-01T00:00:00.000Z' }) });
+  const id = created.json.data.subscription._id;
+  for (const status of ['active', 'expiring_soon', 'expired', 'cancelled']) {
+    const update = await request(`/subscriptions/${id}/status`, { method: 'PATCH', body: { status } });
+    assert.equal(update.status, 200, update.json.message);
+    assert.equal(update.json.data.status, status);
+    await request('/dashboard/stats');
+    const list = await request('/subscriptions');
+    assert.equal(list.json.data.find(s => s._id === id).status, status);
+  }
+  const invalid = await request(`/subscriptions/${id}/status`, { method: 'PATCH', body: { status: 'invalid' } });
+  assert.equal(invalid.status, 400);
+  const automatic = await request(`/subscriptions/${id}/status`, { method: 'PATCH', body: { status: 'auto' } });
+  assert.equal(automatic.json.data.status, 'expired');
+  assert.equal(automatic.json.data.statusOverride, null);
+});
+
+test('permanent deletion removes only the chosen subscription and its payments, keeping renewals and the client', async () => {
+  const created = await request('/subscriptions', { method: 'POST', body: subscription({ unitPrice: 10, quantity: 1, initialPayment: 10 }) });
+  const id = created.json.data.subscription._id;
+  const paymentId = created.json.data.payment._id;
+  const renewed = await request(`/subscriptions/${id}/renew`, { method: 'POST', body: { duration: 1, initialPayment: 3 } });
+  assert.equal(renewed.status, 201);
+  const invalid = await request('/subscriptions/not-an-id', { method: 'DELETE' });
+  assert.equal(invalid.status, 400);
+  const guest = await request(`/subscriptions/${id}`, { method: 'DELETE', authenticated: false });
+  assert.equal(guest.status, 401);
+  const removed = await request(`/subscriptions/${id}`, { method: 'DELETE' });
+  assert.equal(removed.status, 200, removed.json.message);
+  assert.equal(await require('../src/models/Subscription').countDocuments({ _id: id }), 0);
+  assert.equal(await require('../src/models/Payment').countDocuments({ _id: paymentId }), 0);
+  const child = await request(`/subscriptions/${renewed.json.data.subscription._id}`);
+  assert.equal(child.status, 200);
+  assert.equal(child.json.data.subscription.renewalOf, null);
+  assert.equal(child.json.data.subscription.totalPaid, 3);
+  assert.equal((await request(`/clients/${clientId}`)).status, 200);
+  assert.equal((await request(`/subscriptions/${id}`, { method: 'DELETE' })).status, 404);
 });
 
 test('clients can be searched, edited and archived, including punctuation searches', async () => {

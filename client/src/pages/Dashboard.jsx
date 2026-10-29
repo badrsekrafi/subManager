@@ -33,6 +33,7 @@ import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import StatusBadge from '../components/shared/StatusBadge'
 import ServiceIcon from '../components/shared/ServiceIcon'
+import RenewalPeriod from '../components/shared/RenewalPeriod'
 import Modal from '../components/ui/Modal'
 import Select from '../components/ui/Select'
 import Input from '../components/ui/Input'
@@ -118,7 +119,7 @@ export default function Dashboard() {
         duration: { value: Number(renewDuration), unit: 'months' },
         unitPrice: Number(renewUnitPrice),
         quantity: Number(renewQuantity),
-        startDate: new Date().toISOString(),
+        startDate: selectedSubToRenew.expirationDate,
         initialPayment: Number(renewInitialPayment),
         paymentMethod: renewPaymentMethod,
       })
@@ -519,6 +520,7 @@ export default function Dashboard() {
       >
         {selectedSubToRenew && (
           <form onSubmit={handleRenewSubmit} className="space-y-4 text-xs">
+            <RenewalPeriod expirationDate={selectedSubToRenew.expirationDate} months={renewDuration} />
             <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 flex items-center justify-between">
               <div>
                 <p className="font-bold text-gray-900 dark:text-gray-100 text-sm">

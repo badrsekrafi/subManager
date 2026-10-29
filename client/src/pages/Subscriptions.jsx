@@ -4,14 +4,10 @@ import {
   CreditCard,
   PlusCircle,
   Search,
-  Filter,
-  RefreshCw,
-  Edit2,
-  Trash2,
-  Eye,
   RotateCw,
-  AlertCircle,
-  XCircle,
+  Eye,
+  Trash2,
+  Tag,
 } from 'lucide-react'
 import api from '../api/axios'
 import Card from '../components/ui/Card'
@@ -22,6 +18,7 @@ import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import StatusBadge from '../components/shared/StatusBadge'
 import ServiceIcon from '../components/shared/ServiceIcon'
+import RenewalPeriod from '../components/shared/RenewalPeriod'
 import Skeleton from '../components/ui/Skeleton'
 import EmptyState from '../components/ui/EmptyState'
 import { formatCurrency, formatDate } from '../utils/formatters'
@@ -33,16 +30,14 @@ export default function Subscriptions() {
   const [services, setServices] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Filters
   const [search, setSearch] = useState('')
   const [selectedService, setSelectedService] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('')
   const [selectedDuration, setSelectedDuration] = useState('')
 
-  // View Details Modal
   const [viewSub, setViewSub] = useState(null)
 
-  // Renewal Modal
+  // Renouvellement
   const [renewSub, setRenewSub] = useState(null)
   const [renewDuration, setRenewDuration] = useState(1)
   const [renewUnitPrice, setRenewUnitPrice] = useState('')
@@ -51,17 +46,20 @@ export default function Subscriptions() {
   const [renewPaymentMethod, setRenewPaymentMethod] = useState('Espèces')
   const [renewLoading, setRenewLoading] = useState(false)
 
-  // Cancel Confirmation
-  const [cancelTarget, setCancelTarget] = useState(null)
-  const [cancelling, setCancelling] = useState(false)
+  // Suppression définitive
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+
+  // Modification statut
+  const [statusTarget, setStatusTarget] = useState(null)
+  const [newStatus, setNewStatus] = useState('active')
+  const [updatingStatus, setUpdatingStatus] = useState(false)
 
   const fetchServices = async () => {
     try {
       const res = await api.get('/services')
       setServices(res.data?.data || [])
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   const fetchSubscriptions = useCallback(async () => {
@@ -89,7 +87,6 @@ export default function Subscriptions() {
     fetchSubscriptions()
   }, [fetchSubscriptions])
 
-  // Filter subscriptions by client search locally
   const filteredSubscriptions = subscriptions.filter((sub) => {
     if (!search.trim()) return true
     const clientName = `${sub.clientId?.firstName || ''} ${sub.clientId?.lastName || ''}`.toLowerCase()
@@ -98,7 +95,6 @@ export default function Subscriptions() {
     return clientName.includes(query) || phone.includes(query)
   })
 
-  // Open renew modal
   const openRenew = (sub) => {
     setRenewSub(sub)
     setRenewDuration(sub.duration?.value || 1)
@@ -118,7 +114,7 @@ export default function Subscriptions() {
         duration: { value: Number(renewDuration), unit: 'months' },
         unitPrice: Number(renewUnitPrice),
         quantity: Number(renewQuantity),
-        startDate: new Date().toISOString(),
+        startDate: renewSub.expirationDate, // Enchaîne exactement sur l'ancienne date d'expiration
         initialPayment: Number(renewInitialPayment),
         paymentMethod: renewPaymentMethod,
       })
@@ -132,24 +128,41 @@ export default function Subscriptions() {
     }
   }
 
-  const handleCancelSubscription = async () => {
-    if (!cancelTarget) return
-    setCancelling(true)
+  const handleDeleteSubscription = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
-      await api.patch(`/subscriptions/${cancelTarget._id}/cancel`)
-      toast.success('Abonnement résilié avec succès')
-      setCancelTarget(null)
+      await api.delete(`/subscriptions/${deleteTarget._id}`)
+      toast.success('Abonnement supprimé définitivement de la base !')
+      setDeleteTarget(null)
       fetchSubscriptions()
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Erreur lors de la résiliation')
+      toast.error(err.response?.data?.message || 'Erreur lors de la suppression')
     } finally {
-      setCancelling(false)
+      setDeleting(false)
+    }
+  }
+
+  const handleUpdateStatus = async (e) => {
+    e.preventDefault()
+    if (!statusTarget) return
+    setUpdatingStatus(true)
+    try {
+      await api.patch(`/subscriptions/${statusTarget._id}/status`, {
+        status: newStatus,
+      })
+      toast.success('Statut mis à jour avec succès !')
+      setStatusTarget(null)
+      fetchSubscriptions()
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Erreur lors de la modification')
+    } finally {
+      setUpdatingStatus(false)
     }
   }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2.5">
@@ -166,10 +179,8 @@ export default function Subscriptions() {
         </Link>
       </div>
 
-      {/* Filters bar */}
       <Card padding={false} className="p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          {/* Search */}
           <div className="relative lg:col-span-2">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -177,15 +188,14 @@ export default function Subscriptions() {
               placeholder="Rechercher par client..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-xs bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 dark:text-gray-100"
+              className="w-full pl-10 pr-4 py-2 text-xs bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-900 dark:text-gray-100"
             />
           </div>
 
-          {/* Service Filter */}
           <select
             value={selectedService}
             onChange={(e) => setSelectedService(e.target.value)}
-            className="text-xs px-3 py-2 bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="text-xs px-3 py-2 bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-800 dark:text-gray-200"
           >
             <option value="">Tous les services</option>
             {services.map((s) => (
@@ -195,11 +205,10 @@ export default function Subscriptions() {
             ))}
           </select>
 
-          {/* Status Filter */}
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-            className="text-xs px-3 py-2 bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="text-xs px-3 py-2 bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-800 dark:text-gray-200"
           >
             <option value="">Tous les statuts</option>
             <option value="active">Actif</option>
@@ -208,11 +217,10 @@ export default function Subscriptions() {
             <option value="cancelled">Annulé</option>
           </select>
 
-          {/* Duration Filter */}
           <select
             value={selectedDuration}
             onChange={(e) => setSelectedDuration(e.target.value)}
-            className="text-xs px-3 py-2 bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="text-xs px-3 py-2 bg-gray-50 dark:bg-gray-750 border border-gray-200 dark:border-gray-700 rounded-xl text-gray-800 dark:text-gray-200"
           >
             <option value="">Toutes les durées</option>
             {DURATION_OPTIONS.map((d) => (
@@ -224,7 +232,6 @@ export default function Subscriptions() {
         </div>
       </Card>
 
-      {/* Subscriptions Table */}
       <Card padding={false} className="overflow-hidden">
         {loading ? (
           <div className="p-6 space-y-4">
@@ -318,15 +325,23 @@ export default function Subscriptions() {
                           >
                             <RotateCw className="w-4 h-4" />
                           </button>
-                          {sub.status !== 'cancelled' && (
-                            <button
-                              onClick={() => setCancelTarget(sub)}
-                              className="p-1.5 rounded-lg text-gray-500 hover:text-red-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                              title="Annuler"
-                            >
-                              <XCircle className="w-4 h-4" />
-                            </button>
-                          )}
+                          <button
+                            onClick={() => {
+                              setStatusTarget(sub)
+                              setNewStatus(sub.statusOverride || 'auto')
+                            }}
+                            className="p-1.5 rounded-lg text-gray-500 hover:text-amber-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                            title="Modifier le statut"
+                          >
+                            <Tag className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget(sub)}
+                            className="p-1.5 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                            title="Supprimer définitivement"
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -338,12 +353,8 @@ export default function Subscriptions() {
         )}
       </Card>
 
-      {/* View Details Modal */}
-      <Modal
-        isOpen={!!viewSub}
-        onClose={() => setViewSub(null)}
-        title="Détails de l'abonnement"
-      >
+      {/* Modal Détails */}
+      <Modal isOpen={!!viewSub} onClose={() => setViewSub(null)} title="Détails de l'abonnement">
         {viewSub && (
           <div className="space-y-4 text-xs">
             <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-750 rounded-xl">
@@ -360,69 +371,30 @@ export default function Subscriptions() {
 
             <div className="grid grid-cols-2 gap-3 p-3 border border-gray-100 dark:border-gray-700 rounded-xl">
               <div>
-                <span className="text-gray-400 block mb-0.5">Date d'achat :</span>
-                <span className="font-medium text-gray-800 dark:text-gray-200">
-                  {formatDate(viewSub.purchaseDate)}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-400 block mb-0.5">Date de début :</span>
+                <span className="text-gray-400 block mb-0.5">Date début :</span>
                 <span className="font-medium text-gray-800 dark:text-gray-200">
                   {formatDate(viewSub.startDate)}
                 </span>
               </div>
               <div>
-                <span className="text-gray-400 block mb-0.5">Durée :</span>
-                <span className="font-medium text-gray-800 dark:text-gray-200">
-                  {viewSub.duration?.value} mois
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-400 block mb-0.5">Date d'expiration :</span>
+                <span className="text-gray-400 block mb-0.5">Date expiration :</span>
                 <span className="font-bold text-indigo-600 dark:text-indigo-400">
                   {formatDate(viewSub.expirationDate)}
                 </span>
               </div>
               <div>
-                <span className="text-gray-400 block mb-0.5">Quantité :</span>
-                <span className="font-medium text-gray-800 dark:text-gray-200">
-                  {viewSub.quantity} unité(s)
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-400 block mb-0.5">Prix unitaire :</span>
-                <span className="font-medium text-gray-800 dark:text-gray-200">
-                  {formatCurrency(viewSub.unitPrice)}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-400 block mb-0.5">Montant total :</span>
+                <span className="text-gray-400 block mb-0.5">Total :</span>
                 <span className="font-bold text-gray-900 dark:text-gray-100">
                   {formatCurrency(viewSub.totalPrice)}
                 </span>
               </div>
               <div>
-                <span className="text-gray-400 block mb-0.5">Encaissé :</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                  {formatCurrency(viewSub.totalPaid)}
-                </span>
-              </div>
-              <div className="col-span-2 pt-2 border-t border-gray-100 dark:border-gray-700 flex justify-between items-center">
-                <span className="text-gray-500 font-semibold">Reste à payer :</span>
-                <span className="font-bold text-red-600 dark:text-red-400 text-sm">
+                <span className="text-gray-400 block mb-0.5">Reste dû :</span>
+                <span className="font-bold text-red-600 dark:text-red-400">
                   {formatCurrency(viewSub.remaining)}
                 </span>
               </div>
             </div>
-
-            {viewSub.notes && (
-              <div>
-                <span className="text-gray-400 block mb-1">Notes :</span>
-                <p className="p-2.5 bg-gray-50 dark:bg-gray-750 rounded-xl text-gray-700 dark:text-gray-300 italic">
-                  {viewSub.notes}
-                </p>
-              </div>
-            )}
 
             <div className="flex justify-end pt-2">
               <Button variant="secondary" size="sm" onClick={() => setViewSub(null)}>
@@ -433,14 +405,11 @@ export default function Subscriptions() {
         )}
       </Modal>
 
-      {/* Renewal Modal */}
-      <Modal
-        isOpen={!!renewSub}
-        onClose={() => setRenewSub(null)}
-        title="Renouveler l'abonnement"
-      >
+      {/* Modal Renouvellement */}
+      <Modal isOpen={!!renewSub} onClose={() => setRenewSub(null)} title="Renouveler l'abonnement">
         {renewSub && (
           <form onSubmit={handleRenew} className="space-y-4 text-xs">
+            <RenewalPeriod expirationDate={renewSub.expirationDate} months={renewDuration} />
             <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 flex items-center justify-between">
               <div>
                 <p className="font-bold text-gray-900 dark:text-gray-100 text-sm">
@@ -479,7 +448,7 @@ export default function Subscriptions() {
 
             <div>
               <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Prix unitaire de vente (DT)
+                Prix unitaire de vente (DT) *
               </label>
               <Input
                 type="number"
@@ -492,15 +461,6 @@ export default function Subscriptions() {
                 }}
                 required
               />
-            </div>
-
-            <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-              <div className="flex justify-between items-center text-sm font-bold text-gray-900 dark:text-gray-100">
-                <span>Nouveau total à facturer :</span>
-                <span className="text-indigo-600 dark:text-indigo-400">
-                  {formatCurrency((Number(renewUnitPrice) || 0) * renewQuantity)}
-                </span>
-              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -540,16 +500,51 @@ export default function Subscriptions() {
         )}
       </Modal>
 
-      {/* Cancel Confirmation */}
+      {/* Modal Changement de statut */}
+      <Modal
+        isOpen={!!statusTarget}
+        onClose={() => setStatusTarget(null)}
+        title="Modifier le statut de l'abonnement"
+      >
+        <form onSubmit={handleUpdateStatus} className="space-y-4 text-xs">
+          <p className="text-gray-500 dark:text-gray-400">Le statut choisi reste appliqué jusqu'à modification. Le mode automatique suit les dates de l'abonnement.</p>
+          <div>
+            <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Sélectionnez le nouveau statut :
+            </label>
+            <select
+              value={newStatus}
+              onChange={(e) => setNewStatus(e.target.value)}
+              className="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-gray-800 dark:text-gray-200"
+            >
+              <option value="auto">Automatique (selon la date d'expiration)</option>
+              <option value="active">Actif</option>
+              <option value="expiring_soon">Expire bientôt</option>
+              <option value="expired">Expiré</option>
+              <option value="cancelled">Annulé</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={() => setStatusTarget(null)}>
+              Annuler
+            </Button>
+            <Button type="submit" variant="primary" size="sm" loading={updatingStatus}>
+              Enregistrer le statut
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Confirmation Suppression Définitive */}
       <ConfirmDialog
-        isOpen={!!cancelTarget}
-        onClose={() => setCancelTarget(null)}
-        onConfirm={handleCancelSubscription}
-        loading={cancelling}
-        title="Résilier l'abonnement ?"
-        message="Êtes-vous sûr de vouloir annuler cet abonnement ? Son statut passera à 'Annulé' et il ne sera plus comptabilisé dans les actifs."
-        confirmLabel="Résilier"
-        danger
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteSubscription}
+        loading={deleting}
+        title="Supprimer définitivement cet abonnement ?"
+        message="Attention : Cet abonnement et tous ses paiements seront complètement effacés de la base de données. Cette action est irréversible."
+        confirmLabel="Supprimer définitivement"
+        variant="danger"
       />
     </div>
   )

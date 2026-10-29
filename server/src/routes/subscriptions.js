@@ -353,7 +353,10 @@ router.put('/:id', async (req, res, next) => {
     if (unitPrice !== undefined) subscription.unitPrice = unitPrice;
     if (unitCost !== undefined) subscription.unitCost = unitCost;
     if (notes !== undefined) subscription.notes = notes;
-    if (status !== undefined) subscription.status = status;
+    if (status !== undefined) {
+      subscription.status = status;
+      subscription.statusOverride = status;
+    }
     Object.assign(subscription, {
       duration: values.duration, quantity: values.quantity, unitPrice: values.unitPrice,
       unitCost: values.unitCost, purchaseDate: values.purchaseDate, startDate: values.startDate,
@@ -409,9 +412,8 @@ router.post('/:id/renew', async (req, res, next) => {
       notes,
     } = req.body;
 
-    const requestedStartDate = startDate ? new Date(startDate) : new Date();
-    if (Number.isNaN(requestedStartDate.getTime())) return res.status(400).json({ success: false, message: 'La date de début est invalide.' });
-    const renewalStartDate = new Date(Math.max(requestedStartDate.getTime(), originalSubscription.expirationDate.getTime()));
+    // Renew from the previous expiration even if an older browser sends today.
+    const renewalStartDate = new Date(originalSubscription.expirationDate);
     const values = subscriptionInput({ ...req.body, startDate: renewalStartDate, purchaseDate: new Date() }, {
       duration: originalSubscription.duration,
       quantity: originalSubscription.quantity,
@@ -477,6 +479,7 @@ router.patch('/:id/cancel', async (req, res, next) => {
     }
 
     subscription.status = 'cancelled';
+    subscription.statusOverride = 'cancelled';
     await subscription.save();
 
     const populated = await Subscription.findById(subscription._id)
@@ -487,6 +490,91 @@ router.patch('/:id/cancel', async (req, res, next) => {
       success: true,
       message: 'Abonnement annulé avec succès.',
       data: populated,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+
+/**
+ * DELETE /api/subscriptions/:id
+ * Hard delete a subscription and its associated payments.
+ */
+router.delete('/:id', async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Identifiant abonnement invalide.',
+      });
+    }
+
+    const subscription = await Subscription.findById(req.params.id);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Abonnement introuvable.',
+      });
+    }
+
+    await mongoose.connection.transaction(async session => {
+      await Payment.deleteMany({ subscriptionId: subscription._id }).session(session);
+      // Keep subsequent renewals, but remove their link to the deleted record.
+      await Subscription.updateMany({ renewalOf: subscription._id }, { $set: { renewalOf: null } }).session(session);
+      await Subscription.deleteOne({ _id: subscription._id }).session(session);
+    });
+
+    res.json({
+      success: true,
+      message: 'Abonnement et paiements associés supprimés définitivement.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/subscriptions/:id/status
+ * Manually update the subscription status.
+ */
+router.patch('/:id/status', async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Identifiant abonnement invalide.',
+      });
+    }
+
+    const { status } = req.body;
+    const validStatuses = ['auto', 'active', 'expiring_soon', 'expired', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Statut invalide. Choisissez parmi: active, expiring_soon, expired, cancelled.',
+      });
+    }
+
+    const subscription = await Subscription.findById(req.params.id);
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Abonnement introuvable.',
+      });
+    }
+
+    subscription.statusOverride = status === 'auto' ? null : status;
+    // Let validation recalculate the date-based status when returning to auto.
+    subscription.status = status === 'auto' ? 'active' : status;
+    await subscription.save();
+    const updated = await Subscription.findById(subscription._id).populate('clientId').populate('serviceId');
+
+    res.json({
+      success: true,
+      message: 'Statut mis à jour avec succès.',
+      data: updated,
     });
   } catch (error) {
     next(error);

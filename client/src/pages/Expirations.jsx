@@ -94,7 +94,7 @@ export default function Expirations() {
 
     try {
       await api.post(`/subscriptions/${renewSub._id}/renew`, {
-        duration: Number(renewDuration),
+        duration: { value: Number(renewDuration), unit: 'months' },
         unitPrice: Number(renewUnitPrice),
         quantity: Number(renewQuantity),
         startDate: new Date().toISOString(),

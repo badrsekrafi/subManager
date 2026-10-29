@@ -115,7 +115,7 @@ export default function Dashboard() {
 
     try {
       await api.post(`/subscriptions/${selectedSubToRenew._id}/renew`, {
-        duration: Number(renewDuration),
+        duration: { value: Number(renewDuration), unit: 'months' },
         unitPrice: Number(renewUnitPrice),
         quantity: Number(renewQuantity),
         startDate: new Date().toISOString(),

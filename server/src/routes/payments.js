@@ -67,7 +67,8 @@ router.get('/', async (req, res, next) => {
  */
 router.post('/', async (req, res, next) => {
   try {
-    const { subscriptionId, clientId, amount, paymentDate, paymentMethod, notes } = req.body;
+    const { subscriptionId, clientId, paymentDate, paymentMethod, notes } = req.body;
+    const amount = Number(req.body.amount);
 
     // Validate references
     if (!subscriptionId || !mongoose.Types.ObjectId.isValid(subscriptionId)) {
@@ -84,7 +85,7 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    if (!amount || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({
         success: false,
         message: 'Le montant doit être supérieur à 0.',
@@ -192,11 +193,12 @@ router.put('/:id', async (req, res, next) => {
       });
     }
 
-    const { amount, paymentDate, paymentMethod, notes } = req.body;
+    const { paymentDate, paymentMethod, notes } = req.body;
+    const amount = req.body.amount === undefined ? undefined : Number(req.body.amount);
 
     // If amount is being changed, validate total
     if (amount !== undefined) {
-      if (amount <= 0) {
+      if (!Number.isFinite(amount) || amount <= 0) {
         return res.status(400).json({
           success: false,
           message: 'Le montant doit être supérieur à 0.',

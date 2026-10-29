@@ -89,7 +89,7 @@ const subscriptionSchema = new mongoose.Schema(
  * 1. Calculate expirationDate from startDate + duration (in months).
  * 2. Calculate totalPrice = quantity * unitPrice.
  */
-subscriptionSchema.pre('save', function (next) {
+subscriptionSchema.pre('validate', function () {
   if (this.isModified('startDate') || this.isModified('duration') || this.isNew) {
     this.expirationDate = addMonths(new Date(this.startDate), this.duration.value);
   }
@@ -99,7 +99,10 @@ subscriptionSchema.pre('save', function (next) {
     this.totalPrice = Math.round(this.quantity * this.unitPrice * 1000) / 1000;
   }
 
-  next();
+  if (this.status !== 'cancelled' && this.expirationDate) {
+    const remaining = this.expirationDate.getTime() - Date.now();
+    this.status = remaining <= 0 ? 'expired' : remaining <= 7 * 86400000 ? 'expiring_soon' : 'active';
+  }
 });
 
 subscriptionSchema.index({ clientId: 1 });

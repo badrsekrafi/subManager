@@ -12,6 +12,7 @@ import {
   PlusCircle,
 } from 'lucide-react'
 import api from '../api/axios'
+import { downloadCSV } from '../utils/csv'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
@@ -124,23 +125,16 @@ export default function Unpaid() {
 
     const headers = ['Client', 'Telephone', 'Service', 'Total (DT)', 'Paye (DT)', 'Reste du (DT)', 'Date achat']
     const rows = processedList.map((s) => [
-      `"${s.clientId?.firstName || ''} ${s.clientId?.lastName || ''}"`,
-      `"${s.clientId?.phone || ''}"`,
-      `"${s.serviceId?.name || ''}"`,
+      `${s.clientId?.firstName || ''} ${s.clientId?.lastName || ''}`,
+      `${s.clientId?.phone || ''}`,
+      `${s.serviceId?.name || ''}`,
       s.totalPrice,
       s.totalPaid,
       s.remaining,
       formatDate(s.purchaseDate),
     ])
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement('a')
-    link.setAttribute('href', encodedUri)
-    link.setAttribute('download', `impayes_${format(new Date(), 'yyyy-MM-dd')}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    downloadCSV(headers, rows, `impayes_${format(new Date(), 'yyyy-MM-dd')}.csv`)
     toast.success('Fichier CSV des impayés téléchargé')
   }
 

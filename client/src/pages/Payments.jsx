@@ -12,6 +12,7 @@ import {
   Download,
 } from 'lucide-react'
 import api from '../api/axios'
+import { downloadCSV } from '../utils/csv'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
@@ -114,23 +115,16 @@ export default function Payments() {
 
     const headers = ['Client', 'Telephone', 'Service', 'Montant (DT)', 'Date', 'Methode', 'Notes']
     const rows = filteredPayments.map((p) => [
-      `"${p.clientId?.firstName || ''} ${p.clientId?.lastName || ''}"`,
-      `"${p.clientId?.phone || ''}"`,
-      `"${p.subscriptionId?.serviceId?.name || ''}"`,
+      `${p.clientId?.firstName || ''} ${p.clientId?.lastName || ''}`,
+      `${p.clientId?.phone || ''}`,
+      `${p.subscriptionId?.serviceId?.name || ''}`,
       p.amount,
       formatDate(p.paymentDate),
-      `"${p.paymentMethod || 'Espèces'}"`,
-      `"${p.notes || ''}"`,
+      `${p.paymentMethod || 'Espèces'}`,
+      `${p.notes || ''}`,
     ])
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement('a')
-    link.setAttribute('href', encodedUri)
-    link.setAttribute('download', `paiements_${format(new Date(), 'yyyy-MM-dd')}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    downloadCSV(headers, rows, `paiements_${format(new Date(), 'yyyy-MM-dd')}.csv`)
     toast.success('Export CSV généré')
   }
 

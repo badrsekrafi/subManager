@@ -26,7 +26,7 @@ router.get('/', async (req, res, next) => {
     }
 
     if (search && search.trim()) {
-      const searchRegex = new RegExp(search.trim(), 'i');
+      const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       filter.$or = [
         { firstName: searchRegex },
         { lastName: searchRegex },
@@ -43,11 +43,13 @@ router.get('/', async (req, res, next) => {
       // Subscription counts and total billed
       Subscription.aggregate([
         { $match: { clientId: { $in: clientIds }, status: { $ne: 'cancelled' } } },
+        { $lookup: { from: 'payments', localField: '_id', foreignField: 'subscriptionId', as: 'payments' } },
         {
           $group: {
             _id: '$clientId',
             subscriptionCount: { $sum: 1 },
             totalBilled: { $sum: '$totalPrice' },
+            remaining: { $sum: { $max: [0, { $subtract: ['$totalPrice', { $sum: '$payments.amount' }] }] } },
           },
         },
       ]),
@@ -98,7 +100,7 @@ router.get('/', async (req, res, next) => {
 
       const totalBilled = Math.round(sub.totalBilled * 1000) / 1000;
       const totalPaid = Math.round(pay.totalPaid * 1000) / 1000;
-      const remaining = Math.round((totalBilled - totalPaid) * 1000) / 1000;
+      const remaining = Math.round((sub.remaining || 0) * 1000) / 1000;
 
       return {
         ...client,
@@ -235,6 +237,11 @@ router.get('/:id', async (req, res, next) => {
         client,
         subscriptions: enrichedSubscriptions,
         payments,
+        totals: {
+          totalBilled: Math.round(enrichedSubscriptions.filter(s => s.status !== 'cancelled').reduce((sum, s) => sum + s.totalPrice, 0) * 1000) / 1000,
+          totalPaid: Math.round(payments.reduce((sum, payment) => sum + payment.amount, 0) * 1000) / 1000,
+          remaining: Math.round(enrichedSubscriptions.filter(s => s.status !== 'cancelled').reduce((sum, s) => sum + s.remaining, 0) * 1000) / 1000,
+        },
       },
     });
   } catch (error) {

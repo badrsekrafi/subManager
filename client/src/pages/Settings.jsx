@@ -13,6 +13,7 @@ import {
   Save,
 } from 'lucide-react'
 import api from '../api/axios'
+import { downloadCSV } from '../utils/csv'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import Card from '../components/ui/Card'
@@ -146,24 +147,24 @@ export default function Settings() {
         return
       }
 
-      let csv = ''
+      let headers = []
+      let rows = []
       if (type === 'clients') {
-        const headers = ['Nom', 'Prenom', 'Telephone', 'Total facturé', 'Total payé', 'Reste à payer', 'Notes']
-        const rows = items.map((c) => [
-          `"${c.lastName}"`,
-          `"${c.firstName}"`,
-          `"${c.phone || ''}"`,
+        headers = ['Nom', 'Prenom', 'Telephone', 'Total facturé', 'Total payé', 'Reste à payer', 'Notes']
+        rows = items.map((c) => [
+          `${c.lastName}`,
+          `${c.firstName}`,
+          `${c.phone || ''}`,
           c.totalBilled || 0,
           c.totalPaid || 0,
           c.remaining || 0,
-          `"${c.notes || ''}"`,
+          `${c.notes || ''}`,
         ])
-        csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
       } else if (type === 'subscriptions') {
-        const headers = ['Client', 'Service', 'Date achat', 'Date debut', 'Date expiration', 'Duree (mois)', 'Total', 'Statut']
-        const rows = items.map((s) => [
-          `"${s.clientId?.firstName || ''} ${s.clientId?.lastName || ''}"`,
-          `"${s.serviceId?.name || ''}"`,
+        headers = ['Client', 'Service', 'Date achat', 'Date debut', 'Date expiration', 'Duree (mois)', 'Total', 'Statut']
+        rows = items.map((s) => [
+          `${s.clientId?.firstName || ''} ${s.clientId?.lastName || ''}`,
+          `${s.serviceId?.name || ''}`,
           s.purchaseDate,
           s.startDate,
           s.expirationDate,
@@ -171,27 +172,19 @@ export default function Settings() {
           s.totalPrice,
           s.status,
         ])
-        csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
       } else if (type === 'payments') {
-        const headers = ['Client', 'Service', 'Montant', 'Date paiement', 'Methode', 'Notes']
-        const rows = items.map((p) => [
-          `"${p.clientId?.firstName || ''} ${p.clientId?.lastName || ''}"`,
-          `"${p.subscriptionId?.serviceId?.name || ''}"`,
+        headers = ['Client', 'Service', 'Montant', 'Date paiement', 'Methode', 'Notes']
+        rows = items.map((p) => [
+          `${p.clientId?.firstName || ''} ${p.clientId?.lastName || ''}`,
+          `${p.subscriptionId?.serviceId?.name || ''}`,
           p.amount,
           p.paymentDate,
-          `"${p.paymentMethod || 'Espèces'}"`,
-          `"${p.notes || ''}"`,
+          `${p.paymentMethod || 'Espèces'}`,
+          `${p.notes || ''}`,
         ])
-        csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
       }
 
-      const encodedUri = encodeURI('data:text/csv;charset=utf-8,' + csv)
-      const link = document.createElement('a')
-      link.setAttribute('href', encodedUri)
-      link.setAttribute('download', `sauvegarde_${type}_${format(new Date(), 'yyyy-MM-dd')}.csv`)
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
+      downloadCSV(headers, rows, `sauvegarde_${type}_${format(new Date(), 'yyyy-MM-dd')}.csv`)
 
       toast.dismiss('csv-export')
       toast.success(`Export ${type} terminé avec succès`)

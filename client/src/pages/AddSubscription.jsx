@@ -18,7 +18,7 @@ import Select from '../components/ui/Select'
 import ServiceIcon from '../components/shared/ServiceIcon'
 import { formatCurrency, formatDate } from '../utils/formatters'
 import { DURATION_OPTIONS, PAYMENT_METHODS } from '../utils/constants'
-import { addMonths, format, parseISO } from 'date-fns'
+import { addMonths, format, parseISO, isValid } from 'date-fns'
 import toast from 'react-hot-toast'
 
 export default function AddSubscription() {
@@ -27,7 +27,7 @@ export default function AddSubscription() {
   const preselectedClientId = searchParams.get('clientId')
 
   // Client mode: 'existing' | 'new'
-  const [clientMode, setClientMode] = useState(preselectedClientId ? 'existing' : 'existing')
+  const [clientMode, setClientMode] = useState('existing')
   const [clients, setClients] = useState([])
   const [selectedClientId, setSelectedClientId] = useState(preselectedClientId || '')
   const [newFirstName, setNewFirstName] = useState('')
@@ -53,6 +53,7 @@ export default function AddSubscription() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [dataLoading, setDataLoading] = useState(true)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -68,15 +69,22 @@ export default function AddSubscription() {
           setClientMode('existing')
         } else if (loadedClients.length > 0) {
           setSelectedClientId(loadedClients[0]._id)
+        } else {
+          setClientMode('new')
         }
 
-        const loadedServices = servicesRes.data?.data || []
+        const loadedServices = (servicesRes.data?.data || []).filter(service => service.active !== false)
         setServices(loadedServices)
         if (loadedServices.length > 0) {
           setSelectedServiceId(loadedServices[0]._id)
+        } else {
+          setSelectedServiceId('other')
         }
       } catch {
+        setError('Impossible de charger les clients et services. Veuillez actualiser la page.')
         toast.error('Erreur lors du chargement des données')
+      } finally {
+        setDataLoading(false)
       }
     }
     fetchData()
@@ -86,10 +94,9 @@ export default function AddSubscription() {
   const expirationDateFormatted = useMemo(() => {
     try {
       const start = parseISO(startDate)
-      const exp = addMonths(start, Number(durationMonths) || 1)
-      return exp
+      return isValid(start) ? addMonths(start, Number(durationMonths) || 1) : null
     } catch {
-      return new Date()
+      return null
     }
   }, [startDate, durationMonths])
 
@@ -107,21 +114,45 @@ export default function AddSubscription() {
 
   const paymentStatus = useMemo(() => {
     const paid = parseFloat(initialPayment) || 0
-    if (paid >= totalPrice && totalPrice > 0) return 'Payé'
+    if (unitPrice !== '' && paid >= totalPrice) return 'Payé'
     if (paid > 0) return 'Partiellement payé'
     return 'Impayé'
-  }, [totalPrice, initialPayment])
+  }, [totalPrice, initialPayment, unitPrice])
+
+  const syncFullPayment = (nextPrice, nextQuantity) => {
+    if (Number(initialPayment) === totalPrice) {
+      setInitialPayment(Math.round((Number(nextPrice) || 0) * (Number(nextQuantity) || 0) * 1000) / 1000)
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
 
+    if (dataLoading) return
+    if (!isValid(parseISO(startDate)) || !isValid(parseISO(purchaseDate))) {
+      setError('Veuillez saisir des dates valides.')
+      return
+    }
+    if (!Number.isInteger(Number(durationMonths)) || Number(durationMonths) < 1 || !Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
+      setError('La durée et la quantité doivent être des entiers supérieurs à zéro.')
+      return
+    }
+    if (!selectedServiceId || (selectedServiceId === 'other' && !customServiceName.trim())) {
+      setError('Veuillez sélectionner un service ou saisir son nom.')
+      return
+    }
+    if (unitCost !== '' && (!Number.isFinite(Number(unitCost)) || Number(unitCost) < 0)) {
+      setError("Veuillez saisir un prix d'achat positif ou nul.")
+      return
+    }
+
     // Validations
-    if (!unitPrice || parseFloat(unitPrice) < 0) {
+    if (unitPrice === '' || !Number.isFinite(Number(unitPrice)) || Number(unitPrice) < 0) {
       setError('Veuillez saisir un prix unitaire de vente valide.')
       return
     }
-    if (parseFloat(initialPayment) > totalPrice) {
+    if (!Number.isFinite(Number(initialPayment)) || Number(initialPayment) > totalPrice) {
       setError('Le montant payé ne peut pas dépasser le montant total.')
       return
     }
@@ -149,6 +180,11 @@ export default function AddSubscription() {
           notes: newClientNotes.trim(),
         })
         finalClientId = clientRes.data?.data?._id
+        // Keep the created client on a failed subscription request so retrying
+        // does not silently create duplicate clients.
+        setClients(current => [...current, clientRes.data.data])
+        setSelectedClientId(finalClientId)
+        setClientMode('existing')
       }
 
       if (!finalClientId) {
@@ -165,11 +201,14 @@ export default function AddSubscription() {
           setLoading(false)
           return
         }
-        const sRes = await api.post('/services', {
+        const existingService = services.find(service => service.name.toLocaleLowerCase() === customServiceName.trim().toLocaleLowerCase())
+        const service = existingService || (await api.post('/services', {
           name: customServiceName.trim(),
           icon: 'Package',
-        })
-        finalServiceId = sRes.data?.data?._id
+        })).data.data
+        finalServiceId = service._id
+        if (!existingService) setServices(current => [...current, service])
+        setSelectedServiceId(finalServiceId)
       }
 
       // 3. Create Subscription
@@ -178,7 +217,7 @@ export default function AddSubscription() {
         serviceId: finalServiceId,
         purchaseDate: new Date(purchaseDate).toISOString(),
         startDate: new Date(startDate).toISOString(),
-        duration: Number(durationMonths),
+        duration: { value: Number(durationMonths), unit: 'months' },
         quantity: Number(quantity),
         unitPrice: Number(unitPrice),
         unitCost: unitCost ? Number(unitCost) : undefined,
@@ -263,6 +302,7 @@ export default function AddSubscription() {
                 onChange={(e) => setSelectedClientId(e.target.value)}
                 className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 dark:text-gray-100"
               >
+                <option value="">Sélectionner un client...</option>
                 {clients.map((c) => (
                   <option key={c._id} value={c._id}>
                     {c.firstName} {c.lastName} {c.phone ? `(${c.phone})` : ''}
@@ -421,7 +461,10 @@ export default function AddSubscription() {
                   type="number"
                   min="1"
                   value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
+                  onChange={(e) => {
+                    syncFullPayment(unitPrice, e.target.value)
+                    setQuantity(e.target.value)
+                  }}
                   required
                 />
               </div>
@@ -437,9 +480,8 @@ export default function AddSubscription() {
                   placeholder="Ex: 45.000"
                   value={unitPrice}
                   onChange={(e) => {
+                    syncFullPayment(e.target.value, quantity)
                     setUnitPrice(e.target.value)
-                    const total = (Number(e.target.value) || 0) * (Number(quantity) || 1)
-                    setInitialPayment(total)
                   }}
                   required
                 />
@@ -559,6 +601,7 @@ export default function AddSubscription() {
             variant="primary"
             size="lg"
             loading={loading}
+            disabled={dataLoading}
             icon={Sparkles}
             className="px-8"
           >

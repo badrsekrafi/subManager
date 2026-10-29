@@ -4,8 +4,10 @@ import { Lock, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react'
 import Button from '../components/ui/Button'
 import api from '../api/axios'
 import toast from 'react-hot-toast'
+import { useAuth } from '../context/AuthContext'
 
 export default function ChangePassword() {
+  const { refreshAdmin } = useAuth()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -33,6 +35,7 @@ export default function ChangePassword() {
         newPassword,
         confirmPassword,
       })
+      await refreshAdmin()
       toast.success('Mot de passe mis à jour avec succès !')
       navigate('/dashboard')
     } catch (err) {

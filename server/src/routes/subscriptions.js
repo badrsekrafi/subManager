@@ -5,11 +5,38 @@ const Payment = require('../models/Payment');
 const Client = require('../models/Client');
 const Service = require('../models/Service');
 const auth = require('../middleware/auth');
+const updateStatuses = require('../utils/updateStatuses');
+const { subscriptionInput } = require('../utils/subscriptionInput');
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(auth);
+
+// Validate both documents before writing; undo the new subscription if its
+// initial payment cannot be persisted, including on standalone local MongoDB.
+async function saveWithInitialPayment(subscription, values, notes) {
+  const payment = values.initialPayment > 0 ? new Payment({
+    subscriptionId: subscription._id,
+    clientId: subscription.clientId,
+    amount: values.initialPayment,
+    paymentDate: values.purchaseDate,
+    paymentMethod: values.paymentMethod,
+    notes,
+  }) : null;
+  await subscription.validate();
+  if (payment) await payment.validate();
+  await subscription.save();
+  if (payment) {
+    try {
+      await payment.save();
+    } catch (error) {
+      await Subscription.deleteOne({ _id: subscription._id });
+      throw error;
+    }
+  }
+  return payment;
+}
 
 /**
  * Helper: enrich a subscription with payment data.
@@ -44,6 +71,7 @@ const enrichSubscription = async (subscription) => {
  */
 router.get('/', async (req, res, next) => {
   try {
+    await updateStatuses();
     const { serviceId, status, clientId, duration } = req.query;
     const filter = {};
 
@@ -174,7 +202,10 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    if (!duration || !duration.value || duration.value < 1) {
+    const values = subscriptionInput(req.body);
+    if (client.archived) return res.status(400).json({ success: false, message: 'Ce client est archivé.' });
+    if (!service.active) return res.status(400).json({ success: false, message: 'Ce service est désactivé.' });
+    if (!values.duration.value || values.duration.value < 1) {
       return res.status(400).json({
         success: false,
         message: 'La durée doit être d\'au moins 1 mois.',
@@ -193,32 +224,13 @@ router.post('/', async (req, res, next) => {
       serviceId,
       purchaseDate: purchaseDate || new Date(),
       startDate,
-      duration: {
-        value: duration.value,
-        unit: duration.unit || 'months',
-      },
-      quantity: quantity || 1,
-      unitPrice,
-      unitCost: unitCost || 0,
+      ...values,
       notes: notes || '',
       expirationDate: new Date(), // will be calculated by pre-save
       totalPrice: 0, // will be calculated by pre-save
     });
 
-    await subscription.save();
-
-    // Create initial payment if specified
-    let payment = null;
-    if (initialPayment && initialPayment > 0) {
-      payment = await Payment.create({
-        subscriptionId: subscription._id,
-        clientId,
-        amount: initialPayment,
-        paymentDate: purchaseDate || new Date(),
-        paymentMethod: paymentMethod || 'Espèces',
-        notes: 'Paiement initial',
-      });
-    }
+    const payment = await saveWithInitialPayment(subscription, values, 'Paiement initial');
 
     const populatedSub = await Subscription.findById(subscription._id)
       .populate('clientId')
@@ -231,7 +243,7 @@ router.post('/', async (req, res, next) => {
       remaining: payment
         ? Math.max(0, Math.round((populatedSub.totalPrice - payment.amount) * 1000) / 1000)
         : populatedSub.totalPrice,
-      paymentStatus: payment
+      paymentStatus: populatedSub.totalPrice === 0 ? 'Payé' : payment
         ? payment.amount >= populatedSub.totalPrice
           ? 'Payé'
           : 'Partiellement payé'
@@ -325,20 +337,27 @@ router.put('/:id', async (req, res, next) => {
       status,
     } = req.body;
 
+    const values = subscriptionInput({ ...req.body, initialPayment: 0 }, subscription.toObject());
+    const paid = await Payment.aggregate([
+      { $match: { subscriptionId: subscription._id } },
+      { $group: { _id: null, amount: { $sum: '$amount' } } },
+    ]);
+    if (values.totalPrice < (paid[0]?.amount || 0)) return res.status(400).json({ success: false, message: 'Le total ne peut pas être inférieur au montant déjà encaissé.' });
+    if (serviceId !== undefined && !await Service.exists({ _id: serviceId })) return res.status(400).json({ success: false, message: 'Service introuvable.' });
+
     if (serviceId !== undefined) subscription.serviceId = serviceId;
     if (purchaseDate !== undefined) subscription.purchaseDate = purchaseDate;
     if (startDate !== undefined) subscription.startDate = startDate;
-    if (duration !== undefined) {
-      subscription.duration = {
-        value: duration.value,
-        unit: duration.unit || 'months',
-      };
-    }
+    if (duration !== undefined) subscription.duration = typeof duration === 'number' ? { value: duration, unit: 'months' } : duration;
     if (quantity !== undefined) subscription.quantity = quantity;
     if (unitPrice !== undefined) subscription.unitPrice = unitPrice;
     if (unitCost !== undefined) subscription.unitCost = unitCost;
     if (notes !== undefined) subscription.notes = notes;
     if (status !== undefined) subscription.status = status;
+    Object.assign(subscription, {
+      duration: values.duration, quantity: values.quantity, unitPrice: values.unitPrice,
+      unitCost: values.unitCost, purchaseDate: values.purchaseDate, startDate: values.startDate,
+    });
 
     await subscription.save(); // pre-save recalculates expirationDate & totalPrice
 
@@ -390,42 +409,27 @@ router.post('/:id/renew', async (req, res, next) => {
       notes,
     } = req.body;
 
-    const renewalStartDate = startDate
-      ? new Date(startDate)
-      : originalSubscription.expirationDate;
+    const requestedStartDate = startDate ? new Date(startDate) : new Date();
+    if (Number.isNaN(requestedStartDate.getTime())) return res.status(400).json({ success: false, message: 'La date de début est invalide.' });
+    const renewalStartDate = new Date(Math.max(requestedStartDate.getTime(), originalSubscription.expirationDate.getTime()));
+    const values = subscriptionInput({ ...req.body, startDate: renewalStartDate, purchaseDate: new Date() }, {
+      duration: originalSubscription.duration,
+      quantity: originalSubscription.quantity,
+      unitPrice: originalSubscription.unitPrice,
+      unitCost: originalSubscription.unitCost,
+    });
 
     const newSubscription = new Subscription({
       clientId: originalSubscription.clientId,
       serviceId: originalSubscription.serviceId,
-      purchaseDate: new Date(),
-      startDate: renewalStartDate,
-      duration: {
-        value: duration ? duration.value || duration : originalSubscription.duration.value,
-        unit: 'months',
-      },
-      quantity: quantity || originalSubscription.quantity,
-      unitPrice: unitPrice !== undefined ? unitPrice : originalSubscription.unitPrice,
-      unitCost: originalSubscription.unitCost,
+      ...values,
       notes: notes || '',
       renewalOf: originalSubscription._id,
       expirationDate: new Date(), // calculated by pre-save
       totalPrice: 0, // calculated by pre-save
     });
 
-    await newSubscription.save();
-
-    // Create initial payment for the renewal if specified
-    let payment = null;
-    if (initialPayment && initialPayment > 0) {
-      payment = await Payment.create({
-        subscriptionId: newSubscription._id,
-        clientId: newSubscription.clientId,
-        amount: initialPayment,
-        paymentDate: new Date(),
-        paymentMethod: paymentMethod || 'Espèces',
-        notes: 'Paiement initial - Renouvellement',
-      });
-    }
+    const payment = await saveWithInitialPayment(newSubscription, values, 'Paiement initial - Renouvellement');
 
     const populated = await Subscription.findById(newSubscription._id)
       .populate('clientId')

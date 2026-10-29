@@ -19,10 +19,11 @@ async function initDefaults() {
     // 1. Ensure Admin exists
     const adminEmail = process.env.ADMIN_EMAIL;
     const adminPassword = process.env.ADMIN_INITIAL_PASSWORD;
-    if (!adminEmail) throw new Error('ADMIN_EMAIL est requis pour initialiser le compte administrateur.');
-
-    let admin = await Admin.findOne({ email: adminEmail });
+    // Updating the administrator's email must not recreate the bootstrap
+    // account with its initial password on the next server restart.
+    let admin = await Admin.findOne();
     if (!admin) {
+      if (!adminEmail) throw new Error('ADMIN_EMAIL est requis pour initialiser le compte administrateur.');
       if (!adminPassword) throw new Error('ADMIN_INITIAL_PASSWORD est requis pour créer le compte administrateur.');
       await Admin.create({
         name: 'Administrateur',

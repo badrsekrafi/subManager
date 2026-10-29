@@ -15,9 +15,7 @@ export default function Topbar({ onOpenSidebar }) {
     const fetchExpiring = async () => {
       try {
         const { data } = await api.get('/dashboard/expiring')
-        if (data && data.subscriptions) {
-          setExpiringCount(data.subscriptions.length)
-        }
+        setExpiringCount(data.data?.length || 0)
       } catch {
         // Silently handle if unauthenticated or error
       }

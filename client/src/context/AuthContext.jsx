@@ -11,7 +11,7 @@ export function AuthProvider({ children }) {
   const checkAuth = useCallback(async () => {
     try {
       const { data } = await api.get('/auth/me')
-      setAdmin(data.admin || data)
+      setAdmin(data.data.admin)
       setIsAuthenticated(true)
     } catch {
       setAdmin(null)
@@ -27,9 +27,9 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password })
-    setAdmin(data.admin || data)
+    setAdmin(data.data.admin)
     setIsAuthenticated(true)
-    return data
+    return data.data
   }
 
   const logout = async () => {
@@ -45,12 +45,12 @@ export function AuthProvider({ children }) {
 
   const updateProfile = async (profileData) => {
     const { data } = await api.put('/auth/profile', profileData)
-    setAdmin(data.admin || data)
-    return data
+    setAdmin(data.data.admin)
+    return data.data
   }
 
   return (
-    <AuthContext.Provider value={{ admin, loading, isAuthenticated, login, logout, updateProfile }}>
+    <AuthContext.Provider value={{ admin, loading, isAuthenticated, login, logout, updateProfile, refreshAdmin: checkAuth }}>
       {children}
     </AuthContext.Provider>
   )

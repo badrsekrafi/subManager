@@ -1,4 +1,4 @@
-import { format, formatDistanceToNow, differenceInDays, parseISO } from 'date-fns'
+import { format, formatDistanceToNow, differenceInDays, parseISO, isValid } from 'date-fns'
 import { fr } from 'date-fns/locale'
 
 export function formatCurrency(amount) {
@@ -9,18 +9,21 @@ export function formatCurrency(amount) {
 export function formatDate(date) {
   if (!date) return '-'
   const d = typeof date === 'string' ? parseISO(date) : date
+  if (!isValid(d)) return '-'
   return format(d, 'dd/MM/yyyy', { locale: fr })
 }
 
 export function formatDateTime(date) {
   if (!date) return '-'
   const d = typeof date === 'string' ? parseISO(date) : date
+  if (!isValid(d)) return '-'
   return format(d, 'dd/MM/yyyy HH:mm', { locale: fr })
 }
 
 export function formatRelativeDate(date) {
   if (!date) return '-'
   const d = typeof date === 'string' ? parseISO(date) : date
+  if (!isValid(d)) return '-'
   return formatDistanceToNow(d, { addSuffix: true, locale: fr })
 }
 

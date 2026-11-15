@@ -5,20 +5,15 @@ import {
   User,
   CreditCard,
   Calculator,
-  Calendar,
-  AlertCircle,
-  PlusCircle,
-  CheckCircle,
 } from 'lucide-react'
 import api from '../api/axios'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Select from '../components/ui/Select'
-import ServiceIcon from '../components/shared/ServiceIcon'
 import { formatCurrency, formatDate } from '../utils/formatters'
 import { DURATION_OPTIONS, PAYMENT_METHODS } from '../utils/constants'
-import { addMonths, format, parseISO, isValid } from 'date-fns'
+import { addMonths, format, parseISO } from 'date-fns'
 import toast from 'react-hot-toast'
 
 export default function AddSubscription() {
@@ -26,8 +21,7 @@ export default function AddSubscription() {
   const [searchParams] = useSearchParams()
   const preselectedClientId = searchParams.get('clientId')
 
-  // Client mode: 'existing' | 'new'
-  const [clientMode, setClientMode] = useState('existing')
+  const [clientMode, setClientMode] = useState(preselectedClientId ? 'existing' : 'existing')
   const [clients, setClients] = useState([])
   const [selectedClientId, setSelectedClientId] = useState(preselectedClientId || '')
   const [newFirstName, setNewFirstName] = useState('')
@@ -35,7 +29,6 @@ export default function AddSubscription() {
   const [newPhone, setNewPhone] = useState('')
   const [newClientNotes, setNewClientNotes] = useState('')
 
-  // Subscription details
   const [services, setServices] = useState([])
   const [selectedServiceId, setSelectedServiceId] = useState('')
   const [customServiceName, setCustomServiceName] = useState('')
@@ -47,13 +40,9 @@ export default function AddSubscription() {
   const [unitCost, setUnitCost] = useState('')
   const [internalNotes, setInternalNotes] = useState('')
 
-  // Payment
   const [initialPayment, setInitialPayment] = useState(0)
   const [paymentMethod, setPaymentMethod] = useState('Espèces')
-
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [dataLoading, setDataLoading] = useState(true)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -64,6 +53,7 @@ export default function AddSubscription() {
         ])
         const loadedClients = clientsRes.data?.data || []
         setClients(loadedClients)
+
         if (preselectedClientId) {
           setSelectedClientId(preselectedClientId)
           setClientMode('existing')
@@ -73,34 +63,27 @@ export default function AddSubscription() {
           setClientMode('new')
         }
 
-        const loadedServices = (servicesRes.data?.data || []).filter(service => service.active !== false)
+        const loadedServices = servicesRes.data?.data || []
         setServices(loadedServices)
         if (loadedServices.length > 0) {
           setSelectedServiceId(loadedServices[0]._id)
-        } else {
-          setSelectedServiceId('other')
         }
-      } catch {
-        setError('Impossible de charger les clients et services. Veuillez actualiser la page.')
+      } catch (err) {
         toast.error('Erreur lors du chargement des données')
-      } finally {
-        setDataLoading(false)
       }
     }
     fetchData()
   }, [preselectedClientId])
 
-  // Calculation of Expiration Date
   const expirationDateFormatted = useMemo(() => {
     try {
       const start = parseISO(startDate)
-      return isValid(start) ? addMonths(start, Number(durationMonths) || 1) : null
+      return addMonths(start, Number(durationMonths) || 1)
     } catch {
-      return null
+      return new Date()
     }
   }, [startDate, durationMonths])
 
-  // Financial Calculations
   const totalPrice = useMemo(() => {
     const p = parseFloat(unitPrice) || 0
     const q = parseInt(quantity, 10) || 1
@@ -114,50 +97,47 @@ export default function AddSubscription() {
 
   const paymentStatus = useMemo(() => {
     const paid = parseFloat(initialPayment) || 0
-    if (unitPrice !== '' && paid >= totalPrice) return 'Payé'
+    if (paid >= totalPrice && totalPrice > 0) return 'Payé'
     if (paid > 0) return 'Partiellement payé'
     return 'Impayé'
-  }, [totalPrice, initialPayment, unitPrice])
-
-  const syncFullPayment = (nextPrice, nextQuantity) => {
-    if (Number(initialPayment) === totalPrice) {
-      setInitialPayment(Math.round((Number(nextPrice) || 0) * (Number(nextQuantity) || 0) * 1000) / 1000)
-    }
-  }
+  }, [totalPrice, initialPayment])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setError('')
 
-    if (dataLoading) return
-    if (!isValid(parseISO(startDate)) || !isValid(parseISO(purchaseDate))) {
-      setError('Veuillez saisir des dates valides.')
-      return
-    }
-    if (!Number.isInteger(Number(durationMonths)) || Number(durationMonths) < 1 || !Number.isInteger(Number(quantity)) || Number(quantity) < 1) {
-      setError('La durée et la quantité doivent être des entiers supérieurs à zéro.')
-      return
-    }
-    if (!selectedServiceId || (selectedServiceId === 'other' && !customServiceName.trim())) {
-      setError('Veuillez sélectionner un service ou saisir son nom.')
-      return
-    }
-    if (unitCost !== '' && (!Number.isFinite(Number(unitCost)) || Number(unitCost) < 0)) {
-      setError("Veuillez saisir un prix d'achat positif ou nul.")
+    if (clientMode === 'existing' && (!selectedClientId || clients.length === 0)) {
+      toast.error('Veuillez sélectionner un client ou créer un nouveau client')
       return
     }
 
-    // Validations
-    if (unitPrice === '' || !Number.isFinite(Number(unitPrice)) || Number(unitPrice) < 0) {
-      setError('Veuillez saisir un prix unitaire de vente valide.')
+    if (clientMode === 'new' && (!newFirstName.trim() || !newLastName.trim())) {
+      toast.error('Le prénom et le nom du nouveau client sont obligatoires')
       return
     }
-    if (!Number.isFinite(Number(initialPayment)) || Number(initialPayment) > totalPrice) {
-      setError('Le montant payé ne peut pas dépasser le montant total.')
+
+    if (!selectedServiceId) {
+      toast.error('Veuillez sélectionner un service')
       return
     }
-    if (parseFloat(initialPayment) < 0) {
-      setError('Le montant déjà payé ne peut pas être négatif.')
+
+    if (selectedServiceId === 'other' && !customServiceName.trim()) {
+      toast.error('Veuillez saisir le nom du service personnalisé')
+      return
+    }
+
+    if (!unitPrice || parseFloat(unitPrice) <= 0) {
+      toast.error('Veuillez saisir un prix unitaire valide en DT')
+      return
+    }
+
+    const paidNum = parseFloat(initialPayment) || 0
+    if (paidNum < 0) {
+      toast.error('Le montant payé ne peut pas être négatif')
+      return
+    }
+
+    if (paidNum > totalPrice) {
+      toast.error(`Le montant payé (${paidNum} DT) ne peut pas dépasser le montant total (${totalPrice} DT)`)
       return
     }
 
@@ -166,13 +146,7 @@ export default function AddSubscription() {
     try {
       let finalClientId = selectedClientId
 
-      // 1. If new client, create it first
       if (clientMode === 'new') {
-        if (!newFirstName.trim() || !newLastName.trim()) {
-          setError('Le nom et prénom du nouveau client sont obligatoires.')
-          setLoading(false)
-          return
-        }
         const clientRes = await api.post('/clients', {
           firstName: newFirstName.trim(),
           lastName: newLastName.trim(),
@@ -180,59 +154,35 @@ export default function AddSubscription() {
           notes: newClientNotes.trim(),
         })
         finalClientId = clientRes.data?.data?._id
-        // Keep the created client on a failed subscription request so retrying
-        // does not silently create duplicate clients.
-        setClients(current => [...current, clientRes.data.data])
-        setSelectedClientId(finalClientId)
-        setClientMode('existing')
       }
 
-      if (!finalClientId) {
-        setError('Veuillez sélectionner ou créer un client.')
-        setLoading(false)
-        return
-      }
-
-      // 2. Handle Custom Service if selected
       let finalServiceId = selectedServiceId
       if (selectedServiceId === 'other') {
-        if (!customServiceName.trim()) {
-          setError('Veuillez spécifier le nom du service personnalisé.')
-          setLoading(false)
-          return
-        }
-        const existingService = services.find(service => service.name.toLocaleLowerCase() === customServiceName.trim().toLocaleLowerCase())
-        const service = existingService || (await api.post('/services', {
+        const sRes = await api.post('/services', {
           name: customServiceName.trim(),
           icon: 'Package',
-        })).data.data
-        finalServiceId = service._id
-        if (!existingService) setServices(current => [...current, service])
-        setSelectedServiceId(finalServiceId)
+        })
+        finalServiceId = sRes.data?.data?._id
       }
 
-      // 3. Create Subscription
       await api.post('/subscriptions', {
         clientId: finalClientId,
         serviceId: finalServiceId,
         purchaseDate: new Date(purchaseDate).toISOString(),
         startDate: new Date(startDate).toISOString(),
-        duration: { value: Number(durationMonths), unit: 'months' },
+        duration: Number(durationMonths),
         quantity: Number(quantity),
         unitPrice: Number(unitPrice),
         unitCost: unitCost ? Number(unitCost) : undefined,
         notes: internalNotes.trim(),
-        initialPayment: Number(initialPayment) || 0,
-        paymentMethod: Number(initialPayment) > 0 ? paymentMethod : undefined,
+        initialPayment: paidNum,
+        paymentMethod: paidNum > 0 ? paymentMethod : undefined,
       })
 
       toast.success('Abonnement enregistré avec succès !')
       navigate('/subscriptions')
     } catch (err) {
-      setError(
-        err.response?.data?.message ||
-        'Erreur lors de la création de l’abonnement. Veuillez vérifier les champs.'
-      )
+      toast.error(err.response?.data?.message || 'Erreur lors de la création de l’abonnement.')
     } finally {
       setLoading(false)
     }
@@ -240,7 +190,6 @@ export default function AddSubscription() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto animate-fade-in">
-      {/* Title */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2.5">
           Ajouter un abonnement
@@ -250,15 +199,8 @@ export default function AddSubscription() {
         </p>
       </div>
 
-      {error && (
-        <div className="p-3.5 rounded-xl bg-red-500/20 border border-red-500/30 flex items-start gap-3 text-red-200 text-sm">
-          <AlertCircle className="w-5 h-5 shrink-0 text-red-400 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
-
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Section 1: Client */}
+        {/* Section 1 : Client */}
         <Card>
           <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100 dark:border-gray-700">
             <User className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -277,7 +219,7 @@ export default function AddSubscription() {
                 onChange={() => setClientMode('existing')}
                 className="text-indigo-600 focus:ring-indigo-500"
               />
-              Client existant
+              Client existant ({clients.length})
             </label>
             <label className="flex items-center gap-2 text-xs font-semibold text-gray-800 dark:text-gray-200 cursor-pointer">
               <input
@@ -297,18 +239,23 @@ export default function AddSubscription() {
               <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Choisir un client enregistré
               </label>
-              <select
-                value={selectedClientId}
-                onChange={(e) => setSelectedClientId(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 dark:text-gray-100"
-              >
-                <option value="">Sélectionner un client...</option>
-                {clients.map((c) => (
-                  <option key={c._id} value={c._id}>
-                    {c.firstName} {c.lastName} {c.phone ? `(${c.phone})` : ''}
-                  </option>
-                ))}
-              </select>
+              {clients.length > 0 ? (
+                <select
+                  value={selectedClientId}
+                  onChange={(e) => setSelectedClientId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-gray-100"
+                >
+                  {clients.map((c) => (
+                    <option key={c._id} value={c._id}>
+                      {c.firstName} {c.lastName} {c.phone ? `(${c.phone})` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Aucun client existant. Sélectionnez « Nouveau client » ci-dessus.
+                </p>
+              )}
             </div>
           ) : (
             <div className="space-y-3 pt-2">
@@ -319,10 +266,9 @@ export default function AddSubscription() {
                   </label>
                   <Input
                     type="text"
-                    required={clientMode === 'new'}
                     value={newFirstName}
                     onChange={(e) => setNewFirstName(e.target.value)}
-                    placeholder="Ex: Yassine"
+                    placeholder="Ex: Mohamed"
                   />
                 </div>
                 <div>
@@ -331,10 +277,9 @@ export default function AddSubscription() {
                   </label>
                   <Input
                     type="text"
-                    required={clientMode === 'new'}
                     value={newLastName}
                     onChange={(e) => setNewLastName(e.target.value)}
-                    placeholder="Ex: Trabelsi"
+                    placeholder="Ex: Ben Ali"
                   />
                 </div>
               </div>
@@ -366,7 +311,7 @@ export default function AddSubscription() {
           )}
         </Card>
 
-        {/* Section 2: Subscription details */}
+        {/* Section 2 : Abonnement */}
         <Card>
           <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100 dark:border-gray-700">
             <CreditCard className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -376,7 +321,6 @@ export default function AddSubscription() {
           </div>
 
           <div className="space-y-4">
-            {/* Service Selection */}
             <div>
               <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Type de service / Plateforme *
@@ -384,7 +328,7 @@ export default function AddSubscription() {
               <select
                 value={selectedServiceId}
                 onChange={(e) => setSelectedServiceId(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 dark:text-gray-100"
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-gray-100"
               >
                 {services.map((s) => (
                   <option key={s._id} value={s._id}>
@@ -396,21 +340,19 @@ export default function AddSubscription() {
             </div>
 
             {selectedServiceId === 'other' && (
-              <div className="animate-fade-in">
+              <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Nom du service personnalisé *
                 </label>
                 <Input
                   type="text"
-                  required
-                  placeholder="Ex: NordVPN, Coursera, Midjourney..."
+                  placeholder="Ex: NordVPN, Coursera..."
                   value={customServiceName}
                   onChange={(e) => setCustomServiceName(e.target.value)}
                 />
               </div>
             )}
 
-            {/* Dates & Duration */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -423,19 +365,17 @@ export default function AddSubscription() {
                     setPurchaseDate(e.target.value)
                     setStartDate(e.target.value)
                   }}
-                  required
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Date de début de validité
+                  Date de début
                 </label>
                 <Input
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  required
                 />
               </div>
 
@@ -451,21 +391,16 @@ export default function AddSubscription() {
               </div>
             </div>
 
-            {/* Price & Quantity */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Quantité d'unités *
+                  Quantité *
                 </label>
                 <Input
                   type="number"
                   min="1"
                   value={quantity}
-                  onChange={(e) => {
-                    syncFullPayment(unitPrice, e.target.value)
-                    setQuantity(e.target.value)
-                  }}
-                  required
+                  onChange={(e) => setQuantity(e.target.value)}
                 />
               </div>
 
@@ -480,10 +415,10 @@ export default function AddSubscription() {
                   placeholder="Ex: 45.000"
                   value={unitPrice}
                   onChange={(e) => {
-                    syncFullPayment(e.target.value, quantity)
                     setUnitPrice(e.target.value)
+                    const total = (Number(e.target.value) || 0) * (Number(quantity) || 1)
+                    setInitialPayment(total)
                   }}
-                  required
                 />
               </div>
 
@@ -495,7 +430,7 @@ export default function AddSubscription() {
                   type="number"
                   step="0.001"
                   min="0"
-                  placeholder="Pour calculer la marge"
+                  placeholder="Marge bénéficiaire"
                   value={unitCost}
                   onChange={(e) => setUnitCost(e.target.value)}
                 />
@@ -510,14 +445,14 @@ export default function AddSubscription() {
                 rows="2"
                 value={internalNotes}
                 onChange={(e) => setInternalNotes(e.target.value)}
-                placeholder="Identifiants de profil, profil partagé, etc."
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 dark:text-gray-100"
+                placeholder="Identifiants de profil, etc."
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-gray-100"
               />
             </div>
           </div>
         </Card>
 
-        {/* Section 3: Financial Summary & Initial Payment */}
+        {/* Section 3 : Récapitulatif et règlement */}
         <Card className="bg-gradient-to-br from-indigo-50/50 to-white dark:from-gray-800 dark:to-gray-850 border-indigo-100 dark:border-indigo-900/40">
           <div className="flex items-center gap-2 mb-4 pb-3 border-b border-indigo-100 dark:border-gray-700">
             <Calculator className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -534,7 +469,7 @@ export default function AddSubscription() {
               </span>
             </div>
             <div>
-              <span className="text-gray-400 block mb-0.5">Montant total facturé :</span>
+              <span className="text-gray-400 block mb-0.5">Montant total :</span>
               <span className="font-bold text-gray-900 dark:text-gray-100 text-sm">
                 {formatCurrency(totalPrice)}
               </span>
@@ -570,14 +505,13 @@ export default function AddSubscription() {
                 type="number"
                 step="0.001"
                 min="0"
-                max={totalPrice}
                 value={initialPayment}
                 onChange={(e) => setInitialPayment(e.target.value)}
               />
             </div>
 
             {parseFloat(initialPayment) > 0 && (
-              <div className="animate-fade-in">
+              <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Mode de règlement
                 </label>
@@ -591,7 +525,6 @@ export default function AddSubscription() {
           </div>
         </Card>
 
-        {/* Submit */}
         <div className="flex justify-end gap-3 pt-2">
           <Button variant="ghost" onClick={() => navigate('/subscriptions')}>
             Annuler
@@ -601,9 +534,8 @@ export default function AddSubscription() {
             variant="primary"
             size="lg"
             loading={loading}
-            disabled={dataLoading}
             icon={Sparkles}
-            className="px-8"
+            className="px-8 cursor-pointer"
           >
             Enregistrer l'abonnement
           </Button>
